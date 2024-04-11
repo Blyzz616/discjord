@@ -15,7 +15,10 @@ WORLD=$(grep world /tmp/valheim_log.txt | tail -n1 | awk '{print $NF}' | sed -e 
 date +%s > /opt/discjord/times/srvr.up
 
 VALUP(){
-
+    TITLE="Server $WORLD Online"
+    RISETIME=$(( (date +%s) - "$SCRIPTSTART") ))
+    MESSAGE="$WORLD took $RISETIME to come online."
+    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$GREEN\", \"title\": \"$TITLE\", \"description\": \"$MESSAGE\" }] }" $URL
 }
 
 VALDOWN(){
@@ -23,8 +26,10 @@ VALDOWN(){
 }
 
 JOIN(){
-
-    
+    STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
+    [[ ! -d /opt/discjord/playerdb/html/ ]] && mkdir /opt/discjord/playerdb/html/
+    wget -qO /opt/discjord/playerdb/html/"STEAMID".html "$STEAMLINK"
+    ## PARSE THE STEAM HTML
 }
 
 QUIT(){
@@ -35,32 +40,34 @@ OBIT(){
 
 }
 
+UPDATE(){
+
+}
+
 READER(){
     tail -Fn0 /tmp/valheim_log.txt 2> /dev/null | \
     while read -r LINE ; do
-        SRVRUP=$(echo "$LINE" | grep -Ec 'Game server connected')
+        SRVRUP=$(echo "$LINE" | grep -E 'Game server connected')
         STEAMID=$(eco "$LINE" | grep -Eo 'SteamID\s[0-9]+$' | awk '{print $2}')
-        STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
-        [[ ! -d /opt/discjord/playerdb/html/ ]] && mkdir /opt/discjord/playerdb/html/
-        wget -qO /opt/discjord/playerdb/html/"STEAMID".html "$STEAMLINK"
-
-        ## PARSE THE STEAM HTML
-
-      if [[ $SRVRUP -eq 1 ]]; then
-        TITLE="Server $WORLD Online"
-        RISETIME=$(( (date +%s) - "$SCRIPTSTART") ))
-        MESSAGE="$WORLD took $RISETIME to come online."
-        curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$GREEN\", \"title\": \"$TITLE\", \"description\": \"$MESSAGE\" }] }" $URL
-      fi
+        [[ $STEAMID ]] && JOIN
+        [[ $SRVRUP ]] && VALUP
     done
 }
 
 READER
 
 
-#Pre-Password
-#04/10/2024 16:12:12: Got connection SteamID 76561198058880519
-#04/10/2024 16:12:12: Got handshake from client 76561198058880519
+# There might be a problem with this becuase of the time difference
+#SteamID
+#04/10/2024 16:21:23: Got connection SteamID 76561198058880519
+#04/10/2024 16:21:23: Got handshake from client 76561198058880519
+#04/10/2024 16:21:52: Network version check, their:23, mine:23
+#04/10/2024 16:21:52: Server: New peer connected,sending global keys
+#Playername
+#04/10/2024 16:22:13: Got character ZDOID from Astrid : -136624608:6
+
+
+
 #incompatible verison
 #04/10/2024 16:12:49: Network version check, their:23, mine:20
 #04/10/2024 16:12:49: Peer 76561198058880519 has incompatible version, mine:0.217.38 (network version 20)   remote 0.217.46 (network version 23)
@@ -72,9 +79,11 @@ READER
 #04/10/2024 16:12:49: Got status changed msg k_ESteamNetworkingConnectionState_ClosedByPeer
 #04/10/2024 16:12:49: Socket closed by peer Steamworks.SteamNetConnectionStatusChangedCallback_t
 #04/10/2024 16:12:49: Got status changed msg k_ESteamNetworkingConnectionState_None
+
 #Password entered
 #04/10/2024 16:21:52: Network version check, their:23, mine:23
 #04/10/2024 16:21:52: Server: New peer connected,sending global keys
+
 #Character laoded:
 #04/10/2024 16:22:13: Got character ZDOID from Astrid : -136624608:6
 #04/10/2024 16:22:13: Console: <color=orange>Astrid</color>: <color=#FFEB04FF>I HAVE ARRIVED!</color>
