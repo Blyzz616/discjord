@@ -1,91 +1,162 @@
 #! /bin/bash
 
+# This should only run once, when the SCRIPT is started (before the server comes online)
+date +%s > /opt/discjord/times/srvr.up
+
+#CURRENTUSER=$(whoami)
+
 SCRIPTSTART=$(date +%s)
 
-HOOK=WEBHOOK
+HOOK="<!WEBHOOK-REPLACE ME!>"
 STEAMID=""
-#CHARNAME=""
-JOINLOG=/var/log/valheim/join.log
+CHARNAME=""
+STEAMNAME=""
+WORKINGDIR=/opt/discjord
+PLAYERDBDIR="$WORKINGDIR"/playerdb
+JOINLOG="$PLAYERDBDIR"/join.log
+USERLOG="$PLAYERDBDIR"/users.log
+HTMLDIR="$PLAYERDBDIR"/html
+MASTERLIST="$PLAYERDBDIR"/masterlist.db
+TIMES="$WORKINGDIR"/times
+NONAME=""
+# Get World Name
+WORLD=$(grep world /tmp/valheim_log.txt | tail -n1 | awk '{print $NF}' | sed -e 's/(//' | sed -e 's/)//')
+LIVES=/var/log/valheim
 
 # File containing all the colours we use in discord
 source /opt/discjord/colours.dec
 
-# Get World Name
-WORLD=$(grep world /tmp/valheim_log.txt | tail -n1 | awk '{print $NF}' | sed -e 's/(//' | sed -e 's/)//')
-
-# This should only run once, when the SCRIPT is started (before the server comes online)
-date +%s > /opt/discjord/times/srvr.up
-
 VALUP(){
     TITLE="Server $WORLD Online"
-    RISETIME=$(( (date +%s) - "$SCRIPTSTART") ))
+    WORLDUP=$(date +%s)
+    RISETIME=$(( "$WORLDUP" - "$SCRIPTSTART" ))
+    $WORLDUP > "$TIMES"/"$WORLD".up
     MESSAGE="$WORLD took $RISETIME to come online."
-    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$GREEN\", \"title\": \"$TITLE\", \"description\": \"$MESSAGE\" }] }" $URL
+    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$GREEN\", \"title\": \"$TITLE\", \"description\": \"$MESSAGE\" }] }" "$HOOK"
 }
 
 VALDOWN(){
+    DOWNTIME=$(date +%s)
+    UPTIME=$(cat "$TIMES"/"$WORLD".up)
+    ONLINETIME=$(( "$DOWNTIME" - "$UPTIME" ))
+    TITLE="Server $WORLD offline"
+    if [[ "$ONLINETIME" -ge 604800 ]]; then
+        LIFE=$(printf '%dw %dd %dh %dm %ds' $((TOTAL/604800)) $((TOTAL/86400)) $((TOTAL%86400/3600)) $((TOTAL%3600/60)) $((TOTAL%60)))
+    elif [[ "$ONLINETIME" -ge 86400 ]]; then
+        LIFE=$(printf '%dd %dh %dm %ds' $((TOTAL/86400)) $((TOTAL%86400/3600)) $((TOTAL%3600/60)) $((TOTAL%60)))
+    elif [[ "$ONLINETIME" -ge 3600  ]]; then
+        LIFE=$(printf '%dh %dm %ds' $((TOTAL/3600)) $((TOTAL%3600/60)) $((TOTAL%60)))
+    elif [[ "$ONLINETIME" -ge 60 ]]; then
+        LIFE=$(printf '%dm %ds' $((TOTAL/60)) $((TOTAL%60)))
+    else
+        LIFE=$(printf '%ds' $((GAMETIME)))
+    fi
+    MESSAGE="$WORLD was online for $LIFE"
+    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$RED\", \"title\": \"$TITLE\", \"description\": \"$MESSAGE\" }] }" "$HOOK"
+}
 
+GETSTEAMNAME(){
+    STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
+    echo "$DATE - Steam Link set to $STEAMLINK" >> "$JOINLOG"
+    [[ ! -d "$HTMLDIR"/ ]] && mkdir -p "$HTMLDIR"/
+    wget -qO "$HTMLDIR"/"$STEAMID".html "$STEAMLINK"
+    # get Steam Username
+    STEAMNAME=$(grep -E '<title>' "$HTMLDIR"/"$STEAMID".html | awk -F":" '{print $3}' | xargs | awk -F"<" '{print $1}')
+    echo "$DATE - Steam Name set to $STEAMNAME" > "$JOINLOG"
+    return "$STEAMNAME"
+}
+
+ADDPLAYER(){
+    # This is only called when the STEAMID does not exist in the masterlist
+    # Adding Row for STEAMID:
+    #Check that we've got a masterlist
+    [[ ! -d "$PLAYERDBDIR" ]] && mkdir -p "$PLAYERDBDIR"
+    [[ ! -f "$MASTERLIST" ]] && touch "$MASTERLIST"; echo -e "PLAYERID\tSTEAMID\tFIRSTSEEN\tSTEAMNAME\tPLAYERNAME" > $MASTERLIST
+    # Check if there's a player in the Masterlist, if not, set value to 0 else set value to last PLAYERID
+    [[ $(wc -l "$MASTERLIST") -lt 2 ]] && INCREMENTME=0 || INCREMENTME=$(tail -n1 "$MASTERLIST" | awk '{print $1}')
+    # Increment the PLAYERID to get a new PLAYERID
+    PLAYERID=$(( INCREMENTME + 1 ))
+    # OK. We've only got a STEAMID now - no Username - so we're going to have to add that to the MASTERLIST
+    # PLAYERID    STEAMID    FIRSTSEEN    STEAMNAME    "####"
+    GETSTEAMNAME
+    #Add entry in Masterlist without charname
+    echo -e "$PLAYERID\t$STEAMID\t$(date +%Y-%m-%d_%H:%M:%S)\t$STEAMNAME\t#####" >> $MASTERLIST
+    # Then We're going to have to add the username later
+    NONAME="1"
+}
+
+ADDNAME(){
+    # Ok, this should only happen when a new player has joined and we do not have their name in the Masterlist, BUT we do have it now
+    sed -en "/#####/$CHARNAME/"
+    NONAME=""
+    # Now we run JOIN() as it was skipped when we did the ADDPLAYER()
+    JOIN
+##    # Also - lets add a nice little welcome message to the server
 }
 
 JOIN(){
-    LOGINNAME=""
-    STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
-    [[ ! -d /opt/discjord/playerdb/html/ ]] && mkdir -p /opt/discjord/playerdb/html/
-    wget -qO /opt/discjord/playerdb/html/"STEAMID".html "$STEAMLINK"
-    #get Steam Username
-    STEAMNAME=$(grep -E '<title>' /opt/discjord/playerdb/html/"$STEAMID".html | awk -F":" '{print $3}' | xargs | awk -F"<" '{print $1}')
+    DATE=$(date +%Y-%m-%d_%H:%M:%S)
+    echo "$DATE - Join Funciton called" >> "$JOINLOG"
+    if [[ ! -f "$TIMES"/"$CHARNAME.log" ]]; then
+        touch "$TIMES"/"$CHARNAME.log"
+    fi
+    echo "$DATE" > "$TIMES"/"$CHARNAME".online
+    GETSTEAMNAME
     # get image extension
     # some profiles have backgrounds, if they do, then we need to modify the code to ignore them
-    if grep -q 'has_profile_background' /opt/discjord/playerdb/html/"$STEAMID".html; then
-      IMGEXT=$(grep -E -A4 'playerAvatarAutoSizeInner' /opt/discjord/playerdb/html/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
-      # get image link
-      IMGNAME=$(grep -A4 'playerAvatarAutoSizeInner' /opt/discjord/playerdb/html/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
+    if grep -q 'has_profile_background' "$HTMLDIR"/"$STEAMID".html; then
+        echo "$DATE - Steam Profile has a background" > "$JOINLOG"
+        IMGEXT=$(grep -E -A4 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
+        # get image link
+        IMGNAME=$(grep -A4 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
     else
-      IMGEXT=$(grep -A1 'playerAvatarAutoSizeInner' /opt/discjord/playerdb/html/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
-      # get image link
-      IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' /opt/discjord/playerdb/html/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
+        echo "$DATE - Steam Profile does not have a background" > "$JOINLOG"
+        IMGEXT=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
+        # get image link
+        IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
     fi
 
    # get hours played
-    HRS=$(grep -B2 -E 'Valheim' /opt/discjord/playerdb/html/"$STEAMID".html | grep -E 'on record' | grep -o -E '[0-9,]*')
-    DATE=$(date +%Y-%m-%d\ %H:%M:%S)
+    echo "$DATE - Getting hours of Valheim played" > "$JOINLOG"
+    HRS=$(grep -B2 -E 'Valheim' "$HTMLDIR"/"$STEAMID".html | grep -E 'on record' | grep -o -E '[0-9,]*')
 
     # Lets get other games from steam (NAME is game name LAST is last played, HRS is hours in that game)
-    OGAMENAME1=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | grep -E "whiteLink" | head -n1 | xargs | sed 's/.*app\/[0-9]*>//'    | rev | cut -c12- | rev)
-    OGAMENAME2=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | grep -E "whiteLink" | tail -n1 | xargs | sed 's/.*app\/[0-9]*>//'    | rev | cut -c12- | rev)
-    if [[ $(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/:/' | s
+    OGAMENAME1=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | grep -E "whiteLink" | head -n1 | xargs | sed 's/.*app\/[0-9]*>//'    | rev | cut -c12- | rev)
+    OGAMENAME2=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | grep -E "whiteLink" | tail -n1 | xargs | sed 's/.*app\/[0-9]*>//'    | rev | cut -c12- | rev)
+    if [[ $(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/:/' | s
 ed 's/.*/\u&/' | xargs | awk '{print $3 " " $4}') = $(date +%d" "%b) ]]; then
         OGAMELAST1="Last played: Today"
-    elif [[ $(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/:/' |
+    elif [[ $(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/:/' |
  sed 's/.*/\u&/' | xargs | awk '{print $3 " " $4}') = $(date -d "yesterday" +%d" "%b) ]]; then
         OGAMELAST1="Last played: Yesterday"
     else
-        OGAMELAST1=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/
+        OGAMELAST1=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| head -n1 | rev | cut -c9- | rev | sed 's/ on/
 :/' | sed 's/.*/\u&/' | xargs)
     fi
-    if [[ $(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/:/' | s
+    if [[ $(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/:/' | s
 ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
         OGAMELAST2="Last played: Today"
-    elif [[ $(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/:/' |
+    elif [[ $(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/:/' |
  sed 's/.*/\u&/' | xargs) = $(date -d "yesterday" +%d" "%b) ]]; then
         OGAMELAST2="Last played: Yesterday"
     else
-        OGAMELAST2=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/
+        OGAMELAST2=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E 'last.*'| tail -n1 | rev | cut -c9- | rev | sed 's/ on/
 :/' | sed 's/.*/\u&/' | xargs)
     fi
-    OGAMEHRS1=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E '.*ord' | head -n1)
-    OGAMEHRS2=$(grep -E -A4 "\"game_capsule\""    /opt/discjord/playerdb/html/"$STEAMID".html | grep -v 108600 | sed 's/^\s*//' | tail -n10 | grep -o -E '.*ord' | tail -n1)
+    OGAMEHRS1=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E '.*ord' | head -n1)
+    OGAMEHRS2=$(grep -E -A4 "\"game_capsule\"" "$HTMLDIR"/"$STEAMID".html | grep -v 896660 | sed 's/^\s*//' | tail -n10 | grep -o -E '.*ord' | tail -n1)
 
     # lets keep a record of who joins the server
-    touch /opt/discjord/playerdb/users.log /opt/discjord/playerdb/access.log /opt/discjord/playerdb/denied.log
+    # users.log
+    # access.log
+    # denied.log
+    touch "$USERLOG" "$PLAYERDBDIR"/access.log "$PLAYERDBDIR"/denied.log
 
-#    if [[ $(wc -l /opt/discjord/playerdb/users.log) -eq 0 ]]; then
-     if [[ $(wc -l < /opt/discjord/playerdb/users.log) -eq 0 ]]; then
-        echo -e 'FIRST SEEN\tSTEAMID\tSTEAM-NAME\tIP ADDRESS\tlogin\tIMAGE NAME\tIMAGE LINK' > /opt/discjord/playerdb/users.log
+    if [[ $(wc -l < "$USERLOG") -eq 0 ]]; then
+## Need to increment counts when user logs in
+        echo -e 'PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT' > "$USERLOG"
     fi
-
-    echo "$(date +%Y-%m-%d\ %H:%M:%S) - Steam user $STEAMNAME ($STEAMLINK) attempted connection" >> /opt/discjord/playerdb/access.log
-
+    echo "$(date +%Y-%m-%d\ %H:%M:%S) - Steam user $STEAMNAME ($STEAMLINK) attempted connection" >> "$PLAYERDBDIR"/access.log
 
 
     if [[ -z "$OGAMENAME2" ]]; then
@@ -94,38 +165,38 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
                     if [[ -z $PING ]]; then
                         curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
                         \"title\": \"New connection:\", \
-                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\", \
-                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\", \
+                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                     else
-                            curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
-                            \"title\": \"New connection:\", \
-                            \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
-                            \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                        curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
+                        \"title\": \"New connection:\", \
+                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
+                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                     fi
                 else
                     if [[ -z $PING ]]; then
                         curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
                         \"title\": \"New connection:\", \
-                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\", \
+                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\", \
                         \"fields\": [{\"name\": \"Hours on Record:\", \
                         \"value\": \"$HRS\", \
                         \"inline\": false}], \
-                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                     else
                         curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
                         \"title\": \"New connection:\", \
-                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
+                        \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
                         \"fields\": [{\"name\": \"Hours on Record:\", \
                         \"value\": \"$HRS\", \
                         \"inline\": false}], \
-                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                        \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                     fi
                 fi
             else
                 if [[ -z $PING ]]; then
                     curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
                     \"title\": \"New connection:\", \
-                    \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\", \
+                    \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\", \
                     \"fields\": [{\"name\": \"Hours on Record:\", \
                     \"value\": \"$HRS\", \
                     \"inline\": false}, \
@@ -138,11 +209,11 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
                     {\"name\": \"$OGAMENAME1\", \
                     \"value\": \"$OGAMEHRS1 \\n $OGAMELAST1\", \
                     \"inline\": true}], \
-                    \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                    \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                 else
                     curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
                     \"title\": \"New connection:\", \
-                    \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
+                    \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
                     \"fields\": [{\"name\": \"Hours on Record:\", \
                     \"value\": \"$HRS\", \
                     \"inline\": false}, \
@@ -155,14 +226,14 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
                     {\"name\": \"$OGAMENAME1\", \
                     \"value\": \"$OGAMEHRS1 \\n $OGAMELAST1\", \
                     \"inline\": true}], \
-                    \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+                    \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
                 fi
             fi
     else
         if [[ -z $PING ]]; then
             curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
             \"title\": \"New connection:\", \
-            \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\", \
+            \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\", \
             \"fields\": [{\"name\": \"Hours on Record:\", \
             \"value\": \"$HRS\", \
             \"inline\": false}, \
@@ -181,11 +252,11 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
             {\"name\": \"$OGAMENAME2\", \
             \"value\": \"$OGAMEHRS2 \\n $OGAMELAST2\", \
             \"inline\": true}], \
-            \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+            \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
         else
             curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \"color\": \"$PURPLE\", \
             \"title\": \"New connection:\", \
-            \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$LOGINNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
+            \"description\": \"Steam Profile: [$STEAMNAME]($STEAMLINK)\\nLogging in as **$PLAYERNAME**\\nFrom: $GEOIP\\nPing: $PING\", \
             \"fields\": [{\"name\": \"Hours on Record:\", \
             \"value\": \"$HRS\", \
             \"inline\": false}, \
@@ -204,59 +275,148 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
             {\"name\": \"$OGAMENAME2\", \
             \"value\": \"$OGAMEHRS2 \\n $OGAMELAST2\", \
             \"inline\": true}], \
-            \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" $URL
+            \"thumbnail\": { \"url\": \"$IMGNAME\"}}]}" "$HOOK"
         fi
     fi
 
     # check to see if we have a record of the user, if not, add to users.log and save image.
-    if [[ $(grep -c -E "$STEAMID" /opt/discjord/playerdb/users.log) -eq 0 ]]; then
-        echo -e "$DATE\t$STEAMID\t$STEAMNAME\t$CONNIP\t$LOGINNAME\t$STEAMNAME.$IMGEXT\t$IMGNAME" >> /opt/discjord/playerdb/users.log
+    if [[ $(grep -c -E "$STEAMID" "$USERLOG") -eq 0 ]]; then
+        # Get last count of PLAYERID and the increment by 1 for next row
+                #PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT
+        echo -e "$PLAYERID\t$DATE\t$STEAMID\t$STEAMNAME\t$CONNIP\t$PLAYERNAME\t$STEAMNAME.$IMGEXT\t$IMGNAME" >> "$USERLOG"
         # format is:
-        # FIRST SEEN                        STEAMID                                 STEAM NAME            IP ADDRESS            login     IMAGE NAME            IMAGE LINK
+        # FIRST SEEN              STEAMID                       STEAM NAME            IP ADDRESS          login     IMAGE NAME            IMAGE LINK
         # e.g.
         # 2023-08-21 16:25:21     76561198058880519             Blyzz.com             192.168.0.33        blyzz     Blyzz.com.gif
         # If they're not in the users log, they're not in the alias log - add that too
-        echo -e "$STEAMID\t$LOGINNAME" >> /opt/discjord/playerdb/alias.log
+        echo -e "$STEAMID\t$PLAYERNAME" >> "$PLAYERDBDIR"/alias.log
     else
-        if [[ $(grep -c -E "$LOGINNAME" /opt/discjord/playerdb/alias.log) -eq 0 ]]; then
+        if [[ $(grep -c -E "$PLAYERNAME" "$PLAYERDBDIR"/alias.log) -eq 0 ]]; then
             # Ok, so we've got a record of the user in users.log, but no alternate aliases in alias.log so lets save the new username
             # format is:
             # STEAMID                                 FIRST                     OTHERS
             # e.g.
             # 76561198058880519             Blyzz                     blyzz-test                blyzz-2
-            sed -i -E "/^$STEAMID/ s/$/\t$LOGINNAME/" /opt/discjord/playerdb/alias.log
+            sed -i -E "/^$STEAMID/ s/$/\t$PLAYERNAME/" "$PLAYERDBDIR"/alias.log
         fi
     fi
     STEAMID=""  
 }
 
 QUIT(){
+    STEAMID="$CHARQUIT"
+    STEAMNAME=$(grep "$STEAMID" "$MASTERLIST" | awk '{print $4}')
+    CHARNAME=$(grep "$STEAMID" "$MASTERLIST" | awk '{print $5}')
+    JOINTIME=$(cat "$TIMES"/"$CHARNAME".online)
+    QUITTIME=$(date +%s)
+    # This is the session time
+    SESSTIME=$(( QUITTIME - JOINTIME ))
+    STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
+
+    # This adds the current session session to the old session and re-writes it to the session time file
+    if [[ ! -f "$TIMES"/"$CHARNAME".sess ]]; then
+        echo "$SESSTIME" > "$TIMES"/"$CHARNAME".sess
+    else
+         PREVSESS=$(cat "$TIMES"/"$CHARNAME".sess)
+         TOTSESS=$(( PREVSESS + SESSTIME ))
+         echo $TOTSESS > "$TIMES"/"$CHARNAME".sess
+    fi
+
+    # This gets the total session time
+    NEWSESS=$(cat "$TIMES"/"$CHARNAME".sess)
+
+    # Makes it human-readable and keeps it as "$LIFE"
+    if [[ $NEWSESS -ge 604800 ]]; then
+        LIFE=$(printf '%dw %dd %dh %dm %ds' $((NEWSESS/604800)) $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $NEWSESS -ge 86400 ]]; then
+        LIFE=$(printf '%dd %dh %dm %ds' $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $NEWSESS -ge 3600  ]]; then
+        LIFE=$(printf '%dh %dm %ds' $((NEWSESS/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $NEWSESS -ge 60 ]]; then
+        LIFE=$(printf '%dm %ds' $((NEWSESS/60)) $((NEWSESS%60)))
+    else
+        LIFE=$(printf '%ds' $((NEWSESS)))
+    fi
+
+## Need to calculate total time on server - GOES INTO $TOTLIFE
+    IMGNAME=$(grep -E "$STEAMID" "$USERLOG" | awk '{print $NF}')
+    TITLE="\"$CHARNAME has disconnected:\""
+    MESSAGE="\"$STEAMNAME was online for $SESSTIME\nAt time of disconnecting, $CHARNAME had been alive for $LIFE.\nTotal time on server:\n$TOTLIFE\""
+    IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
+    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \
+    \"color\": \"$RED\", \
+    \"title\": \"$TITLE\", \
+    \"description\": \"$MESSAGE\",\
+    \"thumbnail\": { \"url\": \"$IMGNAME\"} }] }" "$HOOK"
 
 }
 
 OBIT(){
-
+    echo "" > /dev/null
 }
 
 UPDATE(){
-
+    echo "" > /dev/null
 }
 
 READER(){
     tail -Fn0 /tmp/valheim_log.txt 2> /dev/null | \
     while read -r LINE ; do
         SRVRUP=$(echo "$LINE" | grep -oE 'Game server connected')
-        STEAMID=$(echo "$LINE" | grep -oE 'SteamID\s[0-9]+$' | awk '{print $2}')
+        STEAMID=$(echo "$LINE" | grep -oE 'handshake\sfrom\sclient\s[0-9]+$' | awk '{print $NF}')
         CHARNAME=$(echo "$LINE" | grep -oE 'orange>\S+' /tmp/valheim_log.txt | cut -d'>' -f2 | cut -d'<' -f1)
-        [[ $SRVRUP ]] && VALUP
-        [[ $CHARNAME ]] && JOIN
+        CHARQUIT=$(echo "$LINE" | grep -oE 'Closing\ssocket\s[0-9]+$' | awk '{print $NF}')
+        DEATH=$(echo "$LINE" | grep -oE 'ZDOID\sfrom\s[a-zA-Z0-9]+\s:\s0:0' | awk '{print $3}')
+        #Got character ZDOID from Astrid : 0:0
+        [[ -n $SRVRUP ]] && VALUP
+        # If we have the Steam ID, and it is NOT in the masterlist, add it
+        # If we have the steam ID, and it IS in the masterlist, run JOIN()
+        if [[ -n $STEAMID ]]; then
+            if [[ $(grep -c "$STEAMID" "$MASTERLIST") -eq 0 ]]; then
+                echo "$DATE - Player STEAMID not in Masterlist" >> "$JOINLOG"
+                ADDPLAYER
+            fi
+        fi
+        # IF we're getting the character name, then the player is already in game
+        # We need to check if the player name is in the Masterlist
+        # If it is not - we add it and then the JOIN() Function is run from ADDNAME()
+        # If it is in the master list, we just go ahead and run the JOIN() funciton.
+        if [[ -n $CHARNAME ]]; then
+            if [[ -n $NONAME ]]; then
+                ADDNAME
+            else
+                JOIN
+            fi
+        fi
+        [[ -n $CHARQUIT ]] && QUIT
     done
+    [[ -n $DEATH ]] && OBIT
 }
 
 READER
 
-
 # There might be a problem with this becuase of the time difference
+# We need to figure out how to deal with multiple players logging in at the same time
+    # Player 1 logs on to server (hasn't entered password yet)
+    # Player 2 logs on to server
+    # Player 2 enters password
+    # Player 1 enters password
+
+    # In this instance, player 2 will log in correctly
+    # player 1 will report as being player 2
+
+    # How I'm going to deal with this is create a master table
+    # this will work on first log-in - We'll create a file in /discjord/playerdb/masterlist.db
+    # Layout of this db should be
+    # PLAYERID    STEAMID            IP_ADDR            STEAMNAME    FISRTSEEN              LOGINCOUNT    PLAYERNAME    COUNT
+    # 1           76561198058880519  222.222.222.222    Blyzz.com    2024-04-11 10:40:15    8             Astrid        6        
+
+    # PLAYERID    STEAMID            STEAMNAME     PRIMARY_PLAYERNAME#LOGIN_COUNT OTHERNAMES#LOGIN_COUNT
+    #             76561198058880519  Blyzz.com     Astrid#6                       Blyzz#2
+
+    # We now need to check that the other counts are not bigger than the Primary - then if it IS bigger than the primary...
+    # ...make it the primary by editing that ROW In place
+
 #SteamID
 #04/10/2024 16:21:23: Got connection SteamID 76561198058880519
 #04/10/2024 16:21:23: Got handshake from client 76561198058880519
