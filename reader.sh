@@ -97,6 +97,11 @@ ADDNAME(){
 JOIN(){
     DATE=$(date +%Y-%m-%d_%H:%M:%S)
     echo "$DATE - Join Funciton called" >> "$JOINLOG"
+    
+    [[ $(wc -l < "$USERLOG") -eq 0 ]] && echo -e 'PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT' > "$USERLOG"
+    
+    echo "$DATE - Steam user $STEAMNAME ($STEAMLINK) attempted connection" >> "$PLAYERDBDIR"/access.log
+    
     if [[ ! -f "$TIMES"/"$CHARNAME.log" ]]; then
         touch "$TIMES"/"$CHARNAME.log"
     fi
@@ -151,13 +156,6 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
     # access.log
     # denied.log
     touch "$USERLOG" "$PLAYERDBDIR"/access.log "$PLAYERDBDIR"/denied.log
-
-    if [[ $(wc -l < "$USERLOG") -eq 0 ]]; then
-## Need to increment counts when user logs in
-        echo -e 'PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT' > "$USERLOG"
-    fi
-    echo "$(date +%Y-%m-%d\ %H:%M:%S) - Steam user $STEAMNAME ($STEAMLINK) attempted connection" >> "$PLAYERDBDIR"/access.log
-
 
     if [[ -z "$OGAMENAME2" ]]; then
             if [[ -z "$OGAMENAME1" ]]; then
@@ -279,26 +277,26 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
         fi
     fi
 
-    # check to see if we have a record of the user, if not, add to users.log and save image.
-    if [[ $(grep -c -E "$STEAMID" "$USERLOG") -eq 0 ]]; then
-        # Get last count of PLAYERID and the increment by 1 for next row
-                #PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT
-        echo -e "$PLAYERID\t$DATE\t$STEAMID\t$STEAMNAME\t$CONNIP\t$PLAYERNAME\t$STEAMNAME.$IMGEXT\t$IMGNAME" >> "$USERLOG"
-        # format is:
-        # FIRST SEEN              STEAMID                       STEAM NAME            IP ADDRESS          login     IMAGE NAME            IMAGE LINK
-        # e.g.
-        # 2023-08-21 16:25:21     76561198058880519             Blyzz.com             192.168.0.33        blyzz     Blyzz.com.gif
-        # If they're not in the users log, they're not in the alias log - add that too
-        echo -e "$STEAMID\t$PLAYERNAME" >> "$PLAYERDBDIR"/alias.log
-    else
-        if [[ $(grep -c -E "$PLAYERNAME" "$PLAYERDBDIR"/alias.log) -eq 0 ]]; then
-            # Ok, so we've got a record of the user in users.log, but no alternate aliases in alias.log so lets save the new username
-            # format is:
-            # STEAMID                                 FIRST                     OTHERS
-            # e.g.
-            # 76561198058880519             Blyzz                     blyzz-test                blyzz-2
-            sed -i -E "/^$STEAMID/ s/$/\t$PLAYERNAME/" "$PLAYERDBDIR"/alias.log
-        fi
+    # # check to see if we have a record of the user, if not, add to users.log and save image.
+    # if [[ $(grep -c -E "$STEAMID" "$USERLOG") -eq 0 ]]; then
+    #     # Get last count of PLAYERID and the increment by 1 for next row
+    #             #PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT
+    #     echo -e "$PLAYERID\t$DATE\t$STEAMID\t$STEAMNAME\t$CONNIP\t$PLAYERNAME\t$STEAMNAME.$IMGEXT\t$IMGNAME" >> "$USERLOG"
+    #     # format is:
+    #     # FIRST SEEN              STEAMID                       STEAM NAME            IP ADDRESS          login     IMAGE NAME            IMAGE LINK
+    #     # e.g.
+    #     # 2023-08-21 16:25:21     76561198058880519             Blyzz.com             192.168.0.33        blyzz     Blyzz.com.gif
+    #     # If they're not in the users log, they're not in the alias log - add that too
+    #     echo -e "$STEAMID\t$PLAYERNAME" >> "$PLAYERDBDIR"/alias.log
+    # else
+    #     if [[ $(grep -c -E "$PLAYERNAME" "$PLAYERDBDIR"/alias.log) -eq 0 ]]; then
+    #         # Ok, so we've got a record of the user in users.log, but no alternate aliases in alias.log so lets save the new username
+    #         # format is:
+    #         # STEAMID                                 FIRST                     OTHERS
+    #         # e.g.
+    #         # 76561198058880519             Blyzz                     blyzz-test                blyzz-2
+    #         sed -i -E "/^$STEAMID/ s/$/\t$PLAYERNAME/" "$PLAYERDBDIR"/alias.log
+    #     fi
     fi
     STEAMID=""  
 }
@@ -308,40 +306,46 @@ QUIT(){
     STEAMNAME=$(grep "$STEAMID" "$MASTERLIST" | awk '{print $4}')
     CHARNAME=$(grep "$STEAMID" "$MASTERLIST" | awk '{print $5}')
     JOINTIME=$(cat "$TIMES"/"$CHARNAME".online)
+    rm "$TIMES"/"$CHARNAME".online
     QUITTIME=$(date +%s)
     # This is the session time
     SESSTIME=$(( QUITTIME - JOINTIME ))
+    echo $SESSTIME >> "$TIMES"/"$CHARNAME".log
     STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
 
-    # This adds the current session session to the old session and re-writes it to the session time file
-    if [[ ! -f "$TIMES"/"$CHARNAME".sess ]]; then
-        echo "$SESSTIME" > "$TIMES"/"$CHARNAME".sess
-    else
-         PREVSESS=$(cat "$TIMES"/"$CHARNAME".sess)
-         TOTSESS=$(( PREVSESS + SESSTIME ))
-         echo $TOTSESS > "$TIMES"/"$CHARNAME".sess
-    fi
+    # # This adds the current session session to the old session and re-writes it to the session time file
+    # if [[ ! -f "$TIMES"/"$CHARNAME".sess ]]; then
+    #     echo "$SESSTIME" > "$TIMES"/"$CHARNAME".sess
+    # else
+    #      PREVSESS=$(cat "$TIMES"/"$CHARNAME".sess)
+    #      TOTSESS=$(( PREVSESS + SESSTIME ))
+    #      echo $TOTSESS > "$TIMES"/"$CHARNAME".sess
+    # fi
+    TOTSESS=0
+    while read -r SUM; do
+        (( TOTSESS += SUM ))
+    done < "$TIMES"/"$CHARNAME".log
 
-    # This gets the total session time
-    NEWSESS=$(cat "$TIMES"/"$CHARNAME".sess)
+    # # This gets the total session time
+    # NEWSESS=$(cat "$TIMES"/"$CHARNAME".sess)
 
     # Makes it human-readable and keeps it as "$LIFE"
-    if [[ $NEWSESS -ge 604800 ]]; then
+    if [[ $TOTSESS -ge 604800 ]]; then
         LIFE=$(printf '%dw %dd %dh %dm %ds' $((NEWSESS/604800)) $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
-    elif [[ $NEWSESS -ge 86400 ]]; then
+    elif [[ $TOTSESS -ge 86400 ]]; then
         LIFE=$(printf '%dd %dh %dm %ds' $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
-    elif [[ $NEWSESS -ge 3600  ]]; then
+    elif [[ $TOTSESS -ge 3600  ]]; then
         LIFE=$(printf '%dh %dm %ds' $((NEWSESS/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
-    elif [[ $NEWSESS -ge 60 ]]; then
+    elif [[ $TOTSESS -ge 60 ]]; then
         LIFE=$(printf '%dm %ds' $((NEWSESS/60)) $((NEWSESS%60)))
     else
         LIFE=$(printf '%ds' $((NEWSESS)))
     fi
 
-## Need to calculate total time on server - GOES INTO $TOTLIFE
+## NEED TO FIGURE OUT HOW LONG A CHAR WAS ALIVE FOR
     IMGNAME=$(grep -E "$STEAMID" "$USERLOG" | awk '{print $NF}')
     TITLE="\"$CHARNAME has disconnected:\""
-    MESSAGE="\"$STEAMNAME was online for $SESSTIME\nAt time of disconnecting, $CHARNAME had been alive for $LIFE.\nTotal time on server:\n$TOTLIFE\""
+    MESSAGE="\"$STEAMNAME was online for $SESSTIME\nAt time of disconnecting, $CHARNAME had been alive for $LIFE.\nTotal time on server:\n$LIFE\""
     IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
     curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \
     \"color\": \"$RED\", \
