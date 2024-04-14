@@ -18,10 +18,10 @@ USERLOG="$PLAYERDBDIR"/users.log
 HTMLDIR="$PLAYERDBDIR"/html
 MASTERLIST="$PLAYERDBDIR"/masterlist.db
 TIMES="$WORKINGDIR"/times
-NONAME=""
+DEATH=""
+VER=""
 # Get World Name
 WORLD=$(grep world /tmp/valheim_log.txt | tail -n1 | awk '{print $NF}' | sed -e 's/(//' | sed -e 's/)//')
-LIVES=/var/log/valheim
 
 # File containing all the colours we use in discord
 source /opt/discjord/colours.dec
@@ -82,13 +82,11 @@ ADDPLAYER(){
     #Add entry in Masterlist without charname
     echo -e "$PLAYERID\t$STEAMID\t$(date +%Y-%m-%d_%H:%M:%S)\t$STEAMNAME\t#####" >> $MASTERLIST
     # Then We're going to have to add the username later
-    NONAME="1"
 }
 
 ADDNAME(){
     # Ok, this should only happen when a new player has joined and we do not have their name in the Masterlist, BUT we do have it now
     sed -en "/#####/$CHARNAME/"
-    NONAME=""
     # Now we run JOIN() as it was skipped when we did the ADDPLAYER()
     JOIN
 ##    # Also - lets add a nice little welcome message to the server
@@ -97,26 +95,35 @@ ADDNAME(){
 JOIN(){
     DATE=$(date +%Y-%m-%d_%H:%M:%S)
     echo "$DATE - Join Funciton called" >> "$JOINLOG"
-    
+
+    # If there is no Userlog - create it
     [[ $(wc -l < "$USERLOG") -eq 0 ]] && echo -e 'PLAYERID\tSTEAMID\tIP_ADDR\tSTEAMNAME\tFISRTSEEN\tLOGINCOUNT\tPLAYERNAME\tCOUNT' > "$USERLOG"
-    
+    # Write log to access log
     echo "$DATE - Steam user $STEAMNAME ($STEAMLINK) attempted connection" >> "$PLAYERDBDIR"/access.log
-    
+
+    # checking if character log exists and creating it
     if [[ ! -f "$TIMES"/"$CHARNAME.log" ]]; then
         touch "$TIMES"/"$CHARNAME.log"
     fi
-    echo "$DATE" > "$TIMES"/"$CHARNAME".online
+
+    # To keep track of life times:
+    #Set Time of birth if itr does not exist
+    [[ ! -f "$TIMES"/"$CHARNAME".tob ]] && date +%s > "$TIMES"/"$CHARNAME".tob
+    
+    # Write date to CHAR.online file 
+    date +%s > "$TIMES"/"$CHARNAME".online
+        
     GETSTEAMNAME
     # get image extension
     # some profiles have backgrounds, if they do, then we need to modify the code to ignore them
     if grep -q 'has_profile_background' "$HTMLDIR"/"$STEAMID".html; then
         echo "$DATE - Steam Profile has a background" > "$JOINLOG"
-        IMGEXT=$(grep -E -A4 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
+        #IMGEXT=$(grep -E -A4 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
         # get image link
         IMGNAME=$(grep -A4 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
     else
         echo "$DATE - Steam Profile does not have a background" > "$JOINLOG"
-        IMGEXT=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
+        #IMGEXT=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}' | awk -F. '{print $NF}')
         # get image link
         IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
     fi
@@ -297,7 +304,7 @@ ed 's/.*/\u&/' | xargs) = $(date +%d" "%b) ]]; then
     #         # 76561198058880519             Blyzz                     blyzz-test                blyzz-2
     #         sed -i -E "/^$STEAMID/ s/$/\t$PLAYERNAME/" "$PLAYERDBDIR"/alias.log
     #     fi
-    fi
+    #fi
     STEAMID=""  
 }
 
@@ -313,6 +320,16 @@ QUIT(){
     echo $SESSTIME >> "$TIMES"/"$CHARNAME".log
     STEAMLINK="https://steamcommunity.com/profiles/$STEAMID"
 
+    # Keep track of CHARACHTER survival
+    #timeofexit
+    TOE=$(date +%s)
+    # If .tob exists, they died in this session. else set tob to .online
+    [[ -f "$TIMES"/"$CHARNAME".tob ]] && TOB=$(cat "$TIMES"/"$CHARNAME".tob);rm "$TIMES"/"$CHARNAME".tob || TOB=$(cat "$TIMES"/"$CHARNAME".online)
+    THISSESS=$(( TOE - TOB ))
+    
+    # Store that somewhere
+    echo $THISSESS > "$TIMES"/"$CHARNAME".sess
+    
     # # This adds the current session session to the old session and re-writes it to the session time file
     # if [[ ! -f "$TIMES"/"$CHARNAME".sess ]]; then
     #     echo "$SESSTIME" > "$TIMES"/"$CHARNAME".sess
@@ -342,7 +359,6 @@ QUIT(){
         LIFE=$(printf '%ds' $((NEWSESS)))
     fi
 
-## NEED TO FIGURE OUT HOW LONG A CHAR WAS ALIVE FOR
     IMGNAME=$(grep -E "$STEAMID" "$USERLOG" | awk '{print $NF}')
     TITLE="\"$CHARNAME has disconnected:\""
     MESSAGE="\"$STEAMNAME was online for $SESSTIME\nAt time of disconnecting, $CHARNAME had been alive for $LIFE.\nTotal time on server:\n$LIFE\""
@@ -356,11 +372,61 @@ QUIT(){
 }
 
 OBIT(){
-    echo "" > /dev/null
+    CHARNAME=$DEATH
+    # Set Time of death
+    TOD=$(date +%s)
+    # Calculate survival time
+    # If the file *.tob exists, use that as a session start time (the char died recently)
+    # Else use *.online (they've not died since they were online)
+    [[ -e "$TIMES"/"$CHARNAME".tob ]] && SESSSTART=$(cat "$TIMES"/"$CHARNAME".tob) || SESSSTART=$("$TIMES"/"$CHARNAME".online)
+    # Then calculate that time until now
+    THISSESS=$(( TOD - SESSSTART ))
+    # If there are previous sessions, add the number to variuable or use 0
+    [[ -f "$TIMES"/"$CHARNAME".sess ]] && PREVSESS=$(cat "$TIMES"/"$CHARNAME".sess) || PREVSESS=0
+    # Add previous sessions to this session
+    SURVIVED=$(( THISSESS + PREVSESS ))
+    # Make Time Survives human readable
+    if [[ $SURVIVED -ge 604800 ]]; then
+        SESS=$(printf '%dw %dd %dh %dm %ds' $((NEWSESS/604800)) $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $SURVIVED -ge 86400 ]]; then
+        SESS=$(printf '%dd %dh %dm %ds' $((NEWSESS/86400)) $((NEWSESS%86400/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $SURVIVED -ge 3600  ]]; then
+        SESS=$(printf '%dh %dm %ds' $((NEWSESS/3600)) $((NEWSESS%3600/60)) $((NEWSESS%60)))
+    elif [[ $SURVIVED -ge 60 ]]; then
+        SESS=$(printf '%dm %ds' $((NEWSESS/60)) $((NEWSESS%60)))
+    else
+        SESS=$(printf '%ds' $((NEWSESS)))
+    fi
+    # Create new time of birth
+    echo "$TOD" > "$TIMES"/"$CHARNAME".tob
+    TITLE="$CHARNAME just died"
+## Creat a bunch of funny death messages and a randomiser
+    MESSAGE="**$CHARNAME** Lived a brilliant life for $SESS,\nbut has now met with an untimely demise."
+    # Get STEAMID
+    STEAMID=$(grep "$CHARNAME" "$MASTERLIST" | awk '{print $2}')
+    IMGNAME=$(grep -A1 'playerAvatarAutoSizeInner' "$HTMLDIR"/"$STEAMID".html | tail -n1 | awk -F'"' '{print $2}')
+    curl -H "Content-Type: application/json" -X POST -d "{\"embeds\": [{ \
+    \"color\": \"$RED\", \
+    \"title\": \"$TITLE\", \
+    \"description\": \"$MESSAGE\",\
+    \"thumbnail\": { \"url\": \"$IMGNAME\"} }] }" "$HOOK"
 }
 
 UPDATE(){
-    echo "" > /dev/null
+#Network version check, their:23, mine:20
+#VER="their:23, mine:20"
+    THEIR=(echo "$VER" | awk -F, '{print $1}' | cut -d':' -f 2)
+    MINE=(echo "$VER" | awk -F, '{print $2}' | cut -d':' -f 2)
+    if [[ "$THEIR" -gt "$MINE" ]]; then
+        # I need to reboot
+## Add code to reboot server
+    elif [[ "$MINE" -gt "$THEIR" ]]; then
+        # I'm good - Let them know they need to update
+## Add code to send notification to user
+    else
+        :
+        #we're good
+    fi
 }
 
 READER(){
@@ -371,6 +437,7 @@ READER(){
         CHARNAME=$(echo "$LINE" | grep -oE 'orange>\S+' /tmp/valheim_log.txt | cut -d'>' -f2 | cut -d'<' -f1)
         CHARQUIT=$(echo "$LINE" | grep -oE 'Closing\ssocket\s[0-9]+$' | awk '{print $NF}')
         DEATH=$(echo "$LINE" | grep -oE 'ZDOID\sfrom\s[a-zA-Z0-9]+\s:\s0:0' | awk '{print $3}')
+        VER=$(echo $"LINE" | grep -oE 'their:[0-9]+,\smine:[0-9]+$')
         #Got character ZDOID from Astrid : 0:0
         [[ -n $SRVRUP ]] && VALUP
         # If we have the Steam ID, and it is NOT in the masterlist, add it
@@ -386,15 +453,16 @@ READER(){
         # If it is not - we add it and then the JOIN() Function is run from ADDNAME()
         # If it is in the master list, we just go ahead and run the JOIN() funciton.
         if [[ -n $CHARNAME ]]; then
-            if [[ -n $NONAME ]]; then
+            if [[ $(grep -cE "####$" "$MASTERLIST") -eq 1 ]]; then
                 ADDNAME
             else
                 JOIN
             fi
         fi
-        [[ -n $CHARQUIT ]] && QUIT
-    done
-    [[ -n $DEATH ]] && OBIT
+        [[ -n "$CHARQUIT" ]] && QUIT
+        [[ -n "$DEATH" ]] && OBIT
+        [[ -n "$VER" ]] && UPDATE
+    done    
 }
 
 READER
