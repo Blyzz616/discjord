@@ -415,12 +415,14 @@ OBIT(){
 UPDATE(){
 #Network version check, their:23, mine:20
 #VER="their:23, mine:20"
-    THEIR=(echo "$VER" | awk -F, '{print $1}' | cut -d':' -f 2)
-    MINE=(echo "$VER" | awk -F, '{print $2}' | cut -d':' -f 2)
+    THEIR=$(echo "$VER" | awk -F, '{print $1}' | cut -d':' -f 2)
+    MINE=$(echo "$VER" | awk -F, '{print $2}' | cut -d':' -f 2)
     if [[ "$THEIR" -gt "$MINE" ]]; then
+        :
         # I need to reboot
 ## Add code to reboot server
     elif [[ "$MINE" -gt "$THEIR" ]]; then
+        :
         # I'm good - Let them know they need to update
 ## Add code to send notification to user
     else
@@ -437,7 +439,7 @@ READER(){
         CHARNAME=$(echo "$LINE" | grep -oE 'orange>\S+' /tmp/valheim_log.txt | cut -d'>' -f2 | cut -d'<' -f1)
         CHARQUIT=$(echo "$LINE" | grep -oE 'Closing\ssocket\s[0-9]+$' | awk '{print $NF}')
         DEATH=$(echo "$LINE" | grep -oE 'ZDOID\sfrom\s[a-zA-Z0-9]+\s:\s0:0' | awk '{print $3}')
-        VER=$(echo $"LINE" | grep -oE 'their:[0-9]+,\smine:[0-9]+$')
+        VER=$(echo "$LINE" | grep -oE 'their:[0-9]+,\smine:[0-9]+$')
         #Got character ZDOID from Astrid : 0:0
         [[ -n $SRVRUP ]] && VALUP
         # If we have the Steam ID, and it is NOT in the masterlist, add it
@@ -563,5 +565,4 @@ READER
 #04/10/2024 17:00:15: Got status changed msg k_ESteamNetworkingConnectionState_ClosedByPeer
 #04/10/2024 17:00:15: Socket closed by peer Steamworks.SteamNetConnectionStatusChangedCallback_t
 #04/10/2024 17:00:15: Got status changed msg k_ESteamNetworkingConnectionState_None
-
 
